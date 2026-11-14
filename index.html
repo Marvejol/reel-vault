@@ -14,10 +14,10 @@ https://www.instagram.com/reel/Dfpi5ubhRsN/</textarea>
     <button id="prev" title="Previous (media key ⏮)">⏮</button>
     <span id="pos" tabindex="-1">–</span>
     <button id="next" title="Next (media key ⏭)">⏭</button>
-    <button id="mini" title="Floating mini player">⧉ Mini player</button>
+    <button id="mini" title="Open BEFORE tapping a reel: reels then play in the floating window">⧉ Mini player</button>
     <label class="opt"><input type="checkbox" id="stopOthers" checked> stop previous reel on next</label>
   </div>
-  <p id="msg" class="hint">Press Start, then tap ▶ inside a reel. ⏭ ⏮ work here, in Chrome's media control (♫ in the toolbar) and on your keyboard's media keys.</p>
+  <p id="msg" class="hint">Press Start, then tap ▶ inside a reel. ⏭ ⏮ work here, in Chrome's media control (♫) and on media keys. To pop out the reel that's already playing: Chrome's ♫ control → picture-in-picture, or right-click the video twice → Picture in picture.</p>
   <div id="grid"></div>
 </div>
 
@@ -80,8 +80,8 @@ function hookSession() {
   set('previoustrack', () => go(cur - 1));
   set('play', () => { keeper.play(); ms.playbackState = 'playing'; });
   set('pause', () => { keeper.pause(); ms.playbackState = 'paused'; clearTimeout(timer); });
-  // The flag that makes Chrome offer picture-in-picture for this page (media hub button + auto PiP on tab switch).
-  set('enterpictureinpicture', openMini);
+  // No 'enterpictureinpicture' handler on purpose: without it, Chrome's own PiP (media control button,
+  // auto-PiP on tab switch, right-click twice on the video) pops out the REAL playing Instagram video, no reload.
 }
 
 // ---- 2. Grid: every reel stays loaded; "stopping" one = reloading its frame ----
@@ -140,8 +140,12 @@ async function openMini() {
     if (doc.activeElement?.tagName === 'IFRAME') startTimer(cur);
   }));
   pip.addEventListener('pagehide', () => { pip = null; msg.textContent = 'Mini player closed.'; });
+  const wasPlaying = playing.has(cur);
   stopReel(cur);                                            // avoid the same reel playing twice
   pipLoad();
+  msg.textContent = wasPlaying
+    ? 'Mini player opened a fresh copy (a frame can\'t move windows without reloading): tap ▶ there. Tip: open it before tapping, or use Chrome\'s own PiP to keep the playing video.'
+    : 'Mini player open: tap ▶ in it. ⏭ ⏮ now switch the reel inside the mini player.';
 }
 function pipLoad() {
   const f = pip.document.querySelector('iframe');
