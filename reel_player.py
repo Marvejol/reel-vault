@@ -22,6 +22,7 @@ from pathlib import Path
 from playwright.async_api import async_playwright, Error as PWError
 
 SITE = "https://marvejol.github.io/reel-vault/"
+FALLBACK = "https://raw.githack.com/Marvejol/reel-vault/main/index.html"   # used while GitHub Pages is off
 PROFILE = Path.home() / ".reel-player-profile"
 LOAD_S, START_S, ASK_S, STALL_S = 15, 6, 120, 15
 
@@ -122,7 +123,10 @@ class Player:
 
     # -- page setup --
     async def open(self, url):
-        await self.page.goto(url, wait_until="domcontentloaded")
+        resp = await self.page.goto(url, wait_until="domcontentloaded")
+        if url == SITE and resp is not None and resp.status == 404:
+            log("GitHub Pages isn't on for the repo yet (404): using the raw.githack copy")
+            await self.page.goto(FALLBACK, wait_until="domcontentloaded")
         # raw.githack shows a notice page on first visit: continue through it.
         link = self.page.get_by_text("Open the page", exact=False)
         if await link.count():
@@ -253,10 +257,17 @@ async def main(url, loop, keep_open, headless):
     async with async_playwright() as p:
         opts = dict(headless=headless, no_viewport=True,
                     args=["--autoplay-policy=no-user-gesture-required"])
-        try:
-            ctx = await p.chromium.launch_persistent_context(str(PROFILE), channel="chrome", **opts)
-        except PWError:                                            # no Chrome installed: Playwright's Chromium
-            ctx = await p.chromium.launch_persistent_context(str(PROFILE), **opts)
+        ctx = None
+        for extra in ({"channel": "chrome", "chromium_sandbox": True},   # your Chrome, sandbox on
+                      {"chromium_sandbox": True},                        # no Chrome: Playwright's Chromium
+                      {"channel": "chrome"}, {}):                        # last resort: sandbox can't start here
+            try:
+                ctx = await p.chromium.launch_persistent_context(str(PROFILE), **opts, **extra)
+                break
+            except PWError:
+                continue
+        if ctx is None:
+            raise SystemExit("Couldn't start Chrome or Chromium (try: playwright install chromium)")
         page = ctx.pages[0] if ctx.pages else await ctx.new_page()
         try:
             player = Player(page, loop)
