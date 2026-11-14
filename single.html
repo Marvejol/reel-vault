@@ -73,6 +73,7 @@ function setSession() {
 //    without adding entries to the page's Back history.
 function load(k) {
   if (!list.length) return;
+  wake();
   i = (k + list.length) % list.length;
   const url = `https://www.instagram.com/p/${list[i].code}/embed/`;
   try { ig.contentWindow.location.replace(url); } catch { ig.src = url; }
@@ -85,9 +86,14 @@ function load(k) {
   $('#pos').focus({ preventScroll: true });   // pull focus back to this page so the next tap inside the iframe is detected
 }
 
+// Keep the silent track running (see index.html): otherwise Chrome hands ⏮ ⏭ to Instagram's frame.
+const wake = () => keeper?.paused && keeper.play().catch(() => {});
+
 // 3) Detect the tap inside the cross-origin iframe: the parent window loses focus to it.
 addEventListener('blur', () => setTimeout(() => {
-  if (document.activeElement !== ig || !list[i]?.secs) return;
+  if (document.activeElement !== ig) return;
+  wake();
+  if (!list[i]?.secs) return;
   clearTimeout(timer);
   timer = setTimeout(() => load(i + 1), list[i].secs * 1000 + 500);
   msg.textContent = `Playing… next in ${list[i].secs}s`;

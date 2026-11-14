@@ -96,6 +96,7 @@ function stopReel(k) {
 }
 function go(k, fromTap = false) {
   if (!list.length) return;
+  wake();
   k = (k + list.length) % list.length;
   if ($('#stopOthers').checked) [...playing].forEach(p => p !== k && stopReel(p));
   cur = k; clearTimeout(timer);
@@ -113,12 +114,17 @@ function startTimer(k) {
 }
 const rearm = () => $('#pos').focus({ preventScroll: true });   // focus back on this page so the next tap is noticed
 
+// Keep the silent track running whenever a reel runs: a Chrome ⏸ pauses it together with the reel,
+// and if it stays paused Chrome hands ⏮ ⏭ to Instagram's frame (greyed out) instead of this page.
+const wake = () => keeper?.paused && keeper.play().catch(() => {});
+
 // ---- 3. Tap detection: the page loses focus to the iframe that was tapped ----
 addEventListener('blur', () => setTimeout(() => {
   const k = frames().indexOf(document.activeElement);
   if (k < 0) return;
   if (k !== cur) go(k, true); else if ($('#stopOthers').checked) [...playing].forEach(p => p !== k && stopReel(p));
   playing.add(k); frames()[k].parentElement.classList.add('playing');
+  wake();
   startTimer(k);
   rearm();
 }));
