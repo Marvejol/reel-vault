@@ -66,7 +66,7 @@ function setSession() {
     artist: item.code,
     album: 'Reel playlist'
   });
-  navigator.mediaSession.playbackState = 'playing';
+
 }
 
 // 2) Same iframe element, new document: location.replace swaps the reel
@@ -103,8 +103,8 @@ $('#start').onclick = async () => {
       ms.setActionHandler('nexttrack', () => load(i + 1));
       ms.setActionHandler('previoustrack', () => load(i - 1));
       // Play/pause only reaches this page's keeper track (Instagram's player can't be reached cross-origin).
-      ms.setActionHandler('play', () => { keeper.play(); ms.playbackState = 'playing'; });
-      ms.setActionHandler('pause', () => { keeper.pause(); ms.playbackState = 'paused'; clearTimeout(timer); });
+      // No play/pause handlers on purpose: Chrome's default then pauses/plays the REAL reel
+      // (whatever player in any frame is active). We only claim ⏮ ⏭.
     }
   }
   await keeper.play().catch(e => msg.textContent = 'Audio blocked: ' + e.message);

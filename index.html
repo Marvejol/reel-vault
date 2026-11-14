@@ -71,15 +71,15 @@ function keeperAudio() {
 function session() {
   const ms = navigator.mediaSession; if (!ms) return;
   ms.metadata = new MediaMetadata({ title: `Reel ${cur + 1} / ${list.length}`, artist: list[cur].code, album: 'Reel grid' });
-  ms.playbackState = 'playing';
+
 }
 function hookSession() {
   const ms = navigator.mediaSession; if (!ms) return;
   const set = (a, f) => { try { ms.setActionHandler(a, f); } catch {} };   // unsupported actions just get skipped
   set('nexttrack', () => go(cur + 1));
   set('previoustrack', () => go(cur - 1));
-  set('play', () => { keeper.play(); ms.playbackState = 'playing'; });
-  set('pause', () => { keeper.pause(); ms.playbackState = 'paused'; clearTimeout(timer); });
+      // No play/pause handlers on purpose: Chrome's default then pauses/plays the REAL reel
+      // (whatever player in any frame is active). We only claim ⏮ ⏭.
   // No 'enterpictureinpicture' handler on purpose: without it, Chrome's own PiP (media control button,
   // auto-PiP on tab switch, right-click twice on the video) pops out the REAL playing Instagram video, no reload.
 }
