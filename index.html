@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Reel Vault</title></head><body>
+<!-- Reel grid + Chrome media controls + mini player. Paste everything into CodePen's HTML pane. -->
+<div class="wrap">
+  <details open>
+    <summary>Reels (one per line, optional seconds after the link)</summary>
+    <textarea id="links" spellcheck="false">https://www.instagram.com/reel/DfsGt_WvvsH/ 38
+https://www.instagram.com/reel/Dfp2916y8mk/
+https://www.instagram.com/reel/Dfpi5ubhRsN/</textarea>
+    <p class="hint">Seconds = auto-next after you tap ▶ in that reel (<code>yt-dlp --print duration LINK</code>).</p>
+  </details>
+  <div class="row">
+    <button id="start" class="primary">▶ Start</button>
+    <button id="prev" title="Previous (media key ⏮)">⏮</button>
+    <span id="pos" tabindex="-1">–</span>
+    <button id="next" title="Next (media key ⏭)">⏭</button>
+    <button id="mini" title="Floating mini player">⧉ Mini player</button>
+    <label class="opt"><input type="checkbox" id="stopOthers" checked> stop previous reel on next</label>
+  </div>
+  <p id="msg" class="hint">Press Start, then tap ▶ inside a reel. ⏭ ⏮ work here, in Chrome's media control (♫ in the toolbar) and on your keyboard's media keys.</p>
+  <div id="grid"></div>
+</div>
+
+<style>
+  :root { color-scheme: dark; --crop-top: 54px; --crop-bottom: 150px; }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: #0a0a0a; color: #eee; font: 14px system-ui, sans-serif; padding: 16px; }
+  .wrap { max-width: 1300px; margin: auto; display: grid; gap: 12px; }
+  summary { cursor: pointer; color: #aaa; margin-bottom: 6px; }
+  textarea { width: 100%; min-height: 80px; background: #111; color: #eee; border: 1px solid #2a2a2a; border-radius: 8px; padding: 8px; font: 12px monospace; }
+  .hint { color: #888; font-size: 12px; text-align: center; } code { color: #bbb; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: center; }
+  button { font: inherit; font-weight: 600; border-radius: 999px; border: 1px solid #3a3a3a; background: #242424; color: #eee; padding: 8px 16px; cursor: pointer; }
+  .primary { background: #0095f6; border-color: #0095f6; }
+  .opt { color: #aaa; font-size: 12px; display: flex; gap: 4px; align-items: center; }
+  #pos { min-width: 60px; text-align: center; color: #aaa; outline: none; }
+  #grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+  .card { position: relative; aspect-ratio: 9/16; overflow: hidden; border-radius: 14px; background: #000; border: 2px solid #2a2a2a; transition: border-color .2s, box-shadow .2s; }
+  .card.cur { border-color: #1db954; box-shadow: 0 0 18px #1db95455; }
+  .card.playing::after { content: "▶ playing"; position: absolute; top: 8px; right: 8px; background: #1db954; color: #000; font: 600 11px system-ui; padding: 2px 8px; border-radius: 999px; pointer-events: none; }
+  .card .n { position: absolute; top: 8px; left: 8px; z-index: 1; background: rgba(0,0,0,.75); padding: 2px 8px; border-radius: 6px; font: 11px monospace; pointer-events: none; }
+  .card iframe { position: absolute; left: 0; width: 100%; border: 0; top: calc(-1 * var(--crop-top)); height: calc(100% + var(--crop-top) + var(--crop-bottom)); }
+</style>
+
+<script>
+const $ = s => document.querySelector(s), grid = $('#grid'), msg = $('#msg');
+let list = [], cur = 0, timer = null, keeper = null, pip = null;
+const playing = new Set();                       // indexes the viewer has started
+const embed = k => `https://www.instagram.com/p/${list[k].code}/embed/`;
+const frames = () => [...grid.querySelectorAll('iframe')];
+
+function parse() {
+  return $('#links').value.split('\n').map(l => {
+    const m = l.match(/instagram\.com\/(?:[\w.]+\/)?(?:reels?|p|tv)\/([\w-]+)/i);
+    const s = parseFloat((l.match(/\s(\d+(?:\.\d+)?)\s*$/) || [])[1]);
+    return m && { code: m[1], secs: s || null };
+  }).filter(Boolean);
+}
+
+// ---- 1. Parent page owns Chrome's media session (inaudible looping track) ----
+function keeperAudio() {
+  const rate = 8000, n = rate * 10, buf = new ArrayBuffer(44 + n * 2), d = new DataView(buf);
+  const w = (o, s) => [...s].forEach((c, k) => d.setUint8(o + k, c.charCodeAt(0)));
+  w(0, 'RIFF'); d.setUint32(4, 36 + n * 2, true); w(8, 'WAVEfmt '); d.setUint32(16, 16, true);
+  d.setUint16(20, 1, true); d.setUint16(22, 1, true); d.setUint32(24, rate, true); d.setUint32(28, rate * 2, true);
+  d.setUint16(32, 2, true); d.setUint16(34, 16, true); w(36, 'data'); d.setUint32(40, n * 2, true);
+  for (let k = 0; k < n; k++) d.setInt16(44 + k * 2, (Math.random() * 3 | 0) - 1, true);   // ±1 LSB ≈ -90 dB
+  const a = new Audio(URL.createObjectURL(new Blob([buf], { type: 'audio/wav' })));
+  a.loop = true; return a;
+}
+function session() {
+  const ms = navigator.mediaSession; if (!ms) return;
+  ms.metadata = new MediaMetadata({ title: `Reel ${cur + 1} / ${list.length}`, artist: list[cur].code, album: 'Reel grid' });
+  ms.playbackState = 'playing';
+}
+function hookSession() {
+  const ms = navigator.mediaSession; if (!ms) return;
+  const set = (a, f) => { try { ms.setActionHandler(a, f); } catch {} };   // unsupported actions just get skipped
+  set('nexttrack', () => go(cur + 1));
+  set('previoustrack', () => go(cur - 1));
+  set('play', () => { keeper.play(); ms.playbackState = 'playing'; });
+  set('pause', () => { keeper.pause(); ms.playbackState = 'paused'; clearTimeout(timer); });
+  // The flag that makes Chrome offer picture-in-picture for this page (media hub button + auto PiP on tab switch).
+  set('enterpictureinpicture', openMini);
+}
+
+// ---- 2. Grid: every reel stays loaded; "stopping" one = reloading its frame ----
+function render() {
+  grid.innerHTML = list.map((r, k) => `<div class="card" data-k="${k}"><span class="n">${k + 1}${r.secs ? ' · ' + r.secs + 's' : ''}</span>
+    <iframe src="${embed(k)}" allow="autoplay; encrypted-media; picture-in-picture" scrolling="no" title="Reel ${k + 1}"></iframe></div>`).join('');
+}
+function stopReel(k) {
+  const f = frames()[k]; if (!f) return;
+  try { f.contentWindow.location.replace(embed(k)); } catch { f.src = embed(k); }
+  playing.delete(k); f.parentElement.classList.remove('playing');
+}
+function go(k, fromTap = false) {
+  if (!list.length) return;
+  k = (k + list.length) % list.length;
+  if ($('#stopOthers').checked) [...playing].forEach(p => p !== k && stopReel(p));
+  cur = k; clearTimeout(timer);
+  document.querySelectorAll('.card').forEach((c, j) => c.classList.toggle('cur', j === k));
+  if (!fromTap) frames()[k].parentElement.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+  $('#pos').textContent = `${k + 1} / ${list.length}`;
+  session();
+  if (pip) pipLoad();
+  msg.textContent = fromTap ? 'Playing.' : `Reel ${k + 1}: tap ▶ inside it.`;
+  rearm();
+}
+function startTimer(k) {
+  clearTimeout(timer);
+  if (list[k].secs) { timer = setTimeout(() => go(k + 1), list[k].secs * 1000 + 500); msg.textContent = `Playing ${k + 1}, next in ${list[k].secs}s`; }
+}
+const rearm = () => $('#pos').focus({ preventScroll: true });   // focus back on this page so the next tap is noticed
+
+// ---- 3. Tap detection: the page loses focus to the iframe that was tapped ----
+addEventListener('blur', () => setTimeout(() => {
+  const k = frames().indexOf(document.activeElement);
+  if (k < 0) return;
+  if (k !== cur) go(k, true); else if ($('#stopOthers').checked) [...playing].forEach(p => p !== k && stopReel(p));
+  playing.add(k); frames()[k].parentElement.classList.add('playing');
+  startTimer(k);
+  rearm();
+}));
+
+// ---- 4. Mini player: Document Picture-in-Picture (Chrome desktop 116+) ----
+async function openMini() {
+  if (!('documentPictureInPicture' in window)) return msg.textContent = 'Mini player needs desktop Chrome/Edge 116+.';
+  if (pip) return pip.focus();
+  if (!list.length) return msg.textContent = 'Press Start first.';
+  pip = await documentPictureInPicture.requestWindow({ width: 300, height: 560 });
+  const doc = pip.document;
+  [...document.styleSheets].forEach(s => { try { doc.head.append(Object.assign(doc.createElement('style'), { textContent: [...s.cssRules].map(r => r.cssText).join('\n') })); } catch {} });
+  doc.body.style.cssText = 'margin:0;padding:6px;display:grid;gap:6px;grid-template-rows:1fr auto;height:100vh;box-sizing:border-box';
+  doc.body.innerHTML = `<div class="card cur" style="aspect-ratio:auto;height:100%"><iframe allow="autoplay; encrypted-media" scrolling="no" title="Mini reel"></iframe></div>
+    <div class="row"><button id="p">⏮</button><span id="c" tabindex="-1" style="color:#aaa"></span><button id="n">⏭</button></div>`;
+  doc.getElementById('p').onclick = () => go(cur - 1);
+  doc.getElementById('n').onclick = () => go(cur + 1);
+  pip.addEventListener('blur', () => setTimeout(() => {      // tap inside the mini player's reel
+    if (doc.activeElement?.tagName === 'IFRAME') startTimer(cur);
+  }));
+  pip.addEventListener('pagehide', () => { pip = null; msg.textContent = 'Mini player closed.'; });
+  stopReel(cur);                                            // avoid the same reel playing twice
+  pipLoad();
+}
+function pipLoad() {
+  const f = pip.document.querySelector('iframe');
+  try { f.contentWindow.location.replace(embed(cur)); } catch { f.src = embed(cur); }
+  pip.document.getElementById('c').textContent = `${cur + 1} / ${list.length}`;
+  pip.document.getElementById('c').focus();
+}
+
+// ---- wiring ----
+$('#start').onclick = async () => {
+  list = parse();
+  if (!list.length) return msg.textContent = 'No valid Instagram links.';
+  playing.clear(); render();
+  if (!keeper) { keeper = keeperAudio(); hookSession(); }
+  await keeper.play().catch(e => msg.textContent = 'Audio blocked: ' + e.message);
+  $('details').open = false;
+  go(0);
+};
+$('#next').onclick = () => go(cur + 1);
+$('#prev').onclick = () => go(cur - 1);
+$('#mini').onclick = openMini;
+</script>
+
+</body></html>

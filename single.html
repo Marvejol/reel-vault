@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Reel Vault – single frame</title></head><body>
+<!-- One-iframe reel player for CodePen. Paste everything into the HTML pane. -->
+<div class="wrap">
+  <textarea id="links" spellcheck="false">https://www.instagram.com/reel/DfsGt_WvvsH/ 38
+https://www.instagram.com/reel/Dfp2916y8mk/
+https://www.instagram.com/reel/Dfpi5ubhRsN/</textarea>
+  <p class="hint">One reel per line. Optional seconds after the link (e.g. <code>38</code>) = auto-next after you tap ▶ in the reel. Get them with <code>yt-dlp --print duration LINK</code>.</p>
+  <div class="row">
+    <button id="start" class="primary">▶ Start</button>
+    <button id="prev">⏮</button>
+    <span id="pos" tabindex="-1">–</span>
+    <button id="next">⏭</button>
+  </div>
+  <div class="frame"><iframe id="ig" allow="autoplay; encrypted-media; picture-in-picture" scrolling="no" title="Reel"></iframe></div>
+  <p id="msg" class="hint">Press Start. Then use Chrome's media control (♫ in the toolbar) or your keyboard's media keys: ⏭ / ⏮ swap the reel inside the same iframe.</p>
+</div>
+
+<style>
+  :root { color-scheme: dark; --crop-top: 54px; --crop-bottom: 150px; }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: #0a0a0a; color: #eee; font: 14px system-ui, sans-serif; padding: 16px; }
+  .wrap { max-width: 420px; margin: auto; display: grid; gap: 10px; }
+  textarea { width: 100%; min-height: 80px; background: #111; color: #eee; border: 1px solid #2a2a2a; border-radius: 8px; padding: 8px; font: 12px monospace; }
+  .hint { color: #888; font-size: 12px; } code { color: #bbb; }
+  .row { display: flex; gap: 8px; align-items: center; justify-content: center; }
+  button { font: inherit; font-weight: 600; border-radius: 999px; border: 1px solid #3a3a3a; background: #242424; color: #eee; padding: 8px 16px; cursor: pointer; }
+  .primary { background: #0095f6; border-color: #0095f6; }
+  #pos { min-width: 60px; text-align: center; color: #aaa; }
+  .frame { position: relative; width: 100%; aspect-ratio: 9/16; overflow: hidden; border-radius: 14px; background: #000; border: 1px solid #2a2a2a; }
+  .frame iframe { position: absolute; left: 0; width: 100%; border: 0; top: calc(-1 * var(--crop-top)); height: calc(100% + var(--crop-top) + var(--crop-bottom)); }
+</style>
+
+<script>
+const $ = s => document.querySelector(s), ig = $('#ig'), msg = $('#msg');
+let list = [], i = 0, timer = null, keeper = null;
+
+function parse() {
+  return $('#links').value.split('\n').map(l => {
+    const m = l.match(/instagram\.com\/(?:[\w.]+\/)?(?:reels?|p|tv)\/([\w-]+)/i);
+    const secs = parseFloat((l.match(/\s(\d+(?:\.\d+)?)\s*$/) || [])[1]);
+    return m && { code: m[1], secs: secs || null };
+  }).filter(Boolean);
+}
+
+// 1) The parent page owns the media session: a looping, inaudible audio track.
+//    Chrome's media hub and the keyboard media keys attach to THIS page, which never navigates,
+//    so the control never "unhooks" when the reel changes.
+function makeKeeperAudio() {
+  const rate = 8000, secs = 10, n = rate * secs, buf = new ArrayBuffer(44 + n * 2), d = new DataView(buf);
+  const str = (o, s) => [...s].forEach((c, k) => d.setUint8(o + k, c.charCodeAt(0)));
+  str(0, 'RIFF'); d.setUint32(4, 36 + n * 2, true); str(8, 'WAVEfmt '); d.setUint32(16, 16, true);
+  d.setUint16(20, 1, true); d.setUint16(22, 1, true); d.setUint32(24, rate, true); d.setUint32(28, rate * 2, true);
+  d.setUint16(32, 2, true); d.setUint16(34, 16, true); str(36, 'data'); d.setUint32(40, n * 2, true);
+  for (let k = 0; k < n; k++) d.setInt16(44 + k * 2, (Math.random() * 3 | 0) - 1, true); // ±1 LSB ≈ -90 dB: inaudible, but "real" audio
+  const a = new Audio(URL.createObjectURL(new Blob([buf], { type: 'audio/wav' })));
+  a.loop = true;
+  return a;
+}
+
+function setSession() {
+  if (!('mediaSession' in navigator)) return;
+  const item = list[i];
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title: `Reel ${i + 1} / ${list.length}`,
+    artist: item.code,
+    album: 'Reel playlist'
+  });
+  navigator.mediaSession.playbackState = 'playing';
+}
+
+// 2) Same iframe element, new document: location.replace swaps the reel
+//    without adding entries to the page's Back history.
+function load(k) {
+  if (!list.length) return;
+  i = (k + list.length) % list.length;
+  const url = `https://www.instagram.com/p/${list[i].code}/embed/`;
+  try { ig.contentWindow.location.replace(url); } catch { ig.src = url; }
+  $('#pos').textContent = `${i + 1} / ${list.length}`;
+  clearTimeout(timer);
+  msg.textContent = list[i].secs
+    ? `Tap ▶ in the reel. It moves on by itself after ${list[i].secs}s.`
+    : 'Tap ▶ in the reel. Use ⏭ (here, in Chrome\'s media control, or media keys) for the next one.';
+  setSession();
+  $('#pos').focus({ preventScroll: true });   // pull focus back to this page so the next tap inside the iframe is detected
+}
+
+// 3) Detect the tap inside the cross-origin iframe: the parent window loses focus to it.
+addEventListener('blur', () => setTimeout(() => {
+  if (document.activeElement !== ig || !list[i]?.secs) return;
+  clearTimeout(timer);
+  timer = setTimeout(() => load(i + 1), list[i].secs * 1000 + 500);
+  msg.textContent = `Playing… next in ${list[i].secs}s`;
+}));
+
+$('#start').onclick = async () => {
+  list = parse();
+  if (!list.length) return msg.textContent = 'No valid Instagram links.';
+  if (!keeper) {
+    keeper = makeKeeperAudio();
+    const ms = navigator.mediaSession;
+    if (ms) {
+      ms.setActionHandler('nexttrack', () => load(i + 1));
+      ms.setActionHandler('previoustrack', () => load(i - 1));
+      // Play/pause only reaches this page's keeper track (Instagram's player can't be reached cross-origin).
+      ms.setActionHandler('play', () => { keeper.play(); ms.playbackState = 'playing'; });
+      ms.setActionHandler('pause', () => { keeper.pause(); ms.playbackState = 'paused'; clearTimeout(timer); });
+    }
+  }
+  await keeper.play().catch(e => msg.textContent = 'Audio blocked: ' + e.message);
+  load(0);
+};
+$('#next').onclick = () => load(i + 1);
+$('#prev').onclick = () => load(i - 1);
+</script>
+
+</body></html>
