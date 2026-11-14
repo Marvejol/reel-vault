@@ -123,7 +123,11 @@ class Player:
 
     # -- page setup --
     async def open(self, url):
-        resp = await self.page.goto(url, wait_until="domcontentloaded")
+        try:
+            resp = await self.page.goto(url, wait_until="domcontentloaded")
+        except PWError as e:
+            self.alive()
+            raise SystemExit(f"Can't open {url}: {str(e).splitlines()[0]} (offline, or wrong address?)")
         if url == SITE and resp is not None and resp.status == 404:
             log("GitHub Pages isn't on for the repo yet (404): using the raw.githack copy")
             await self.page.goto(FALLBACK, wait_until="domcontentloaded")
@@ -253,10 +257,29 @@ class Player:
             i = max(0, i + await self.play_reel(i, total))
 
 
+async def app_page(ctx):
+    """The --app window's page; close the blank window Playwright opens next to it."""
+    for _ in range(30):
+        app = [pg for pg in ctx.pages if pg.url.startswith("http")]
+        if app:
+            break
+        await asyncio.sleep(0.2)
+    page = app[0] if app else (ctx.pages[0] if ctx.pages else await ctx.new_page())
+    for pg in ctx.pages:
+        if pg is not page:
+            try: await pg.close()
+            except PWError: pass
+    return page
+
+
 async def main(url, loop, keep_open, headless):
     async with async_playwright() as p:
         opts = dict(headless=headless, no_viewport=True,
-                    args=["--autoplay-policy=no-user-gesture-required"])
+                    # --app: a bare app window (no tabs, no address bar), like an installed web app
+                    args=["--autoplay-policy=no-user-gesture-required", f"--app={url}",
+                          "--window-size=1280,900", "--no-default-browser-check"],
+                    # hides the "Chrome is being controlled by automated test software" bar
+                    ignore_default_args=["--enable-automation"])
         ctx = None
         for extra in ({"channel": "chrome", "chromium_sandbox": True},   # your Chrome, sandbox on
                       {"chromium_sandbox": True},                        # no Chrome: Playwright's Chromium
@@ -268,7 +291,7 @@ async def main(url, loop, keep_open, headless):
                 continue
         if ctx is None:
             raise SystemExit("Couldn't start Chrome or Chromium (try: playwright install chromium)")
-        page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+        page = await app_page(ctx)
         try:
             player = Player(page, loop)
             await player.open(url)
