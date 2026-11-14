@@ -54,7 +54,7 @@ function makeKeeperAudio() {
   d.setUint16(32, 2, true); d.setUint16(34, 16, true); str(36, 'data'); d.setUint32(40, n * 2, true);
   for (let k = 0; k < n; k++) d.setInt16(44 + k * 2, (Math.random() * 3 | 0) - 1, true); // ±1 LSB ≈ -90 dB: inaudible, but "real" audio
   const a = new Audio(URL.createObjectURL(new Blob([buf], { type: 'audio/wav' })));
-  a.loop = true;
+  a.loop = true; a.dataset.mhSkip = '1';   // tells Media Hub to ignore this silent track
   return a;
 }
 
